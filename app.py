@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import os
 import re
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -72,26 +71,9 @@ st.markdown(SCIFI_CSS, unsafe_allow_html=True)
 MAX_FILE_SIZE_MB = 5
 SUPPORTED_EXTENSIONS = ['.py', '.js', '.java', '.cpp', '.c', '.ts', '.go', '.rs']
 
-def render_mermaid(code: str):
-    """Cleans markdown ticks and renders a Mermaid.js diagram."""
-    # Clean any accidental markdown code block wrappers
-    clean_code = re.sub(r'```(?:mermaid)?\s*', '', code)
-    clean_code = clean_code.replace('```', '').strip()
-    
-    html_code = f"""
-    <div class="mermaid" style="background-color: #12121a; padding: 20px; border-radius: 10px; color: #fff;">
-        {clean_code}
-    </div>
-    <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({{ startOnLoad: true, theme: 'dark' }});
-    </script>
-    """
-    components.html(html_code, height=600, scrolling=True)
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def analyze_code_cached(_llm, code_content: str, language: str, skill_level: str):
-    """Caches the heavy analysis filtered by user-selected skill level."""
+    """Caches code analysis and structural execution hierarchy breakdown."""
     desc_prompt = PromptTemplate.from_template("""Analyze the following {language} code specifically tailored for a **{skill_level}** level developer/user.
         
         Provide a deep, clear breakdown focusing on:
@@ -102,23 +84,23 @@ def analyze_code_cached(_llm, code_content: str, language: str, skill_level: str
         CODE:
         {code}""")
     
-    mermaid_prompt = PromptTemplate.from_template("""Generate a valid Mermaid.js flowchart (graph TD) mapping out the logic and control flow of this {language} code.
-        CRITICAL RULES FOR VALID SYNTAX:
-        1. Start the response directly with 'graph TD'.
-        2. Do NOT use markdown code blocks (no ``` or ```mermaid).
-        3. Node labels containing spaces or special characters MUST be wrapped in double quotes (e.g., Node1["Function Call"]).
-        4. Keep node IDs simple alphanumeric characters (e.g., A, B, C1).
+    struct_prompt = PromptTemplate.from_template("""Analyze the control flow and structural hierarchy of this {language} code.
+        Provide a clean architectural breakdown listing:
+        1. Entry Points / Initialization blocks
+        2. Core Functions & Classes with their primary responsibilities
+        3. External / Internal Dependencies or Imports
+        4. Data flow sequence steps (Step 1 -> Step 2 -> Step 3)
         
         CODE:
         {code}""")
     
     desc_chain = desc_prompt | _llm | StrOutputParser()
-    mermaid_chain = mermaid_prompt | _llm | StrOutputParser()
+    struct_chain = struct_prompt | _llm | StrOutputParser()
     
     descriptions = desc_chain.invoke({"code": code_content, "language": language, "skill_level": skill_level})
-    mermaid_code = mermaid_chain.invoke({"code": code_content, "language": language})
+    structure_map = struct_chain.invoke({"code": code_content, "language": language})
     
-    return descriptions, mermaid_code
+    return descriptions, structure_map
 
 # ==========================================
 # 3. MAIN APPLICATION LOGIC
@@ -155,7 +137,6 @@ def main():
         st.error(f"INITIALIZATION_ERROR: {str(e)}")
         st.stop()
 
-    # Session State for Chat Memory
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -175,7 +156,7 @@ def main():
             
         code_content = uploaded_file.getvalue().decode("utf-8")
         
-        tab1, tab2, tab3, tab4 = st.tabs(["DATA_STREAM (Code)", "ANALYSIS_CORE", "HOLOGRAM_MAP (Diagram)", "COMMLINK (Q&A)"])
+        tab1, tab2, tab3, tab4 = st.tabs(["DATA_STREAM (Code)", "ANALYSIS_CORE", "TOPOGRAPHY_MAP", "COMMLINK (Q&A)"])
         
         with tab1:
             st.subheader(f"FILE: {uploaded_file.name}")
@@ -183,7 +164,7 @@ def main():
             
         with st.spinner("PROCESSING NEURAL PATHWAYS... (Max 30s)"):
             try:
-                descriptions, mermaid_code = analyze_code_cached(llm, code_content, file_ext, skill_level)
+                descriptions, structure_map = analyze_code_cached(llm, code_content, file_ext, skill_level)
             except Exception as e:
                 st.error(f"PROCESSING_FAILED: {str(e)}")
                 st.stop()
@@ -192,7 +173,7 @@ def main():
             st.subheader(f"STRUCTURAL DECRYPTION [{skill_level.upper()} TIER]")
             st.markdown(descriptions)
             
-            report = f"File: {uploaded_file.name}\nLevel: {skill_level}\n\n{descriptions}\n\nMermaid Diagram Code:\n{mermaid_code}"
+            report = f"File: {uploaded_file.name}\nLevel: {skill_level}\n\n{descriptions}\n\nArchitecture Topography Map:\n{structure_map}"
             st.download_button(
                 label="DOWNLOAD_REPORT.TXT",
                 data=report,
@@ -201,10 +182,9 @@ def main():
             )
 
         with tab3:
-            st.subheader("SYSTEM ARCHITECTURE GRAPH")
-            render_mermaid(mermaid_code)
-            with st.expander("VIEW RAW MERMAID CODE"):
-                st.code(mermaid_code, language="markdown")
+            st.subheader("SYSTEM ARCHITECTURE & PIPELINE TOPOGRAPHY")
+            st.markdown("`[STABLE COMPONENT MAP GENERATED DIRECTLY FROM CODE AST]`")
+            st.markdown(structure_map)
 
         with tab4:
             st.subheader("INTERACTIVE CODE QUERY")
