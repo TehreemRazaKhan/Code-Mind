@@ -1,7 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import os
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -135,7 +135,7 @@ def main():
     # Sidebar: Config & Keys
     with st.sidebar:
         st.header("TERMINAL_CONFIG")
-        api_key = st.text_input("ENTER OPENAI API KEY:", type="password")
+        api_key = st.text_input("ENTER GOOGLE GEMINI API KEY:", type="password")
         if not api_key:
             st.warning("SYSTEM REQUIRES API KEY TO INITIALIZE.")
             st.stop()
@@ -143,10 +143,11 @@ def main():
         st.markdown("---")
         st.markdown(f"**Max Upload Size:** {MAX_FILE_SIZE_MB}MB")
         st.markdown(f"**Supported:** {', '.join(SUPPORTED_EXTENSIONS)}")
+        
 
     # Initialize LLM
     try:
-        llm = ChatOpenAI(temperature=0.2, openai_api_key=api_key, model_name="gpt-3.5-turbo")
+        llm = ChatGoogleGenerativeAI(temperature=0.2, google_api_key=api_key, model="gemini-2.0-flash")
     except Exception as e:
         st.error(f"INITIALIZATION_ERROR: {str(e)}")
         st.stop()
