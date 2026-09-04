@@ -1,11 +1,9 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import os
-from io import BytesIO
 from langchain_openai import ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
-from langchain.memory import ConversationBufferMemory
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 # ==========================================
 # 1. PAGE CONFIGURATION & UI THEME
@@ -100,10 +98,7 @@ def render_mermaid(code: str):
 @st.cache_data(ttl=3600, show_spinner=False)
 def analyze_code_cached(_llm, code_content: str, language: str):
     """Caches the heavy analysis to prevent redundant API calls."""
-    # Prompts
-    desc_prompt = PromptTemplate(
-        input_variables=["code", "language"],
-        template="""Analyze the following {language} code. Provide structural descriptions at three difficulty levels.
+    desc_prompt = PromptTemplate.from_template("""Analyze the following {language} code. Provide structural descriptions at three difficulty levels.
         FORMAT EXACTLY LIKE THIS:
         ### [BEGINNER]
         (Simple explanation for non-technical users)
@@ -113,23 +108,20 @@ def analyze_code_cached(_llm, code_content: str, language: str):
         (Deep dive into time complexity, memory management, and architectural patterns)
         
         CODE:
-        {code}"""
-    )
+        {code}""")
     
-    mermaid_prompt = PromptTemplate(
-        input_variables=["code", "language"],
-        template="""Create a Mermaid.js flowchart mapping out the logic and dependencies of this {language} code.
+    mermaid_prompt = PromptTemplate.from_template("""Create a Mermaid.js flowchart mapping out the logic and dependencies of this {language} code.
         Respond ONLY with the valid Mermaid code blocks (start with 'graph TD'). Do not include markdown code ticks (`).
         
         CODE:
-        {code}"""
-    )
+        {code}""")
     
-    desc_chain = LLMChain(llm=_llm, prompt=desc_prompt)
-    mermaid_chain = LLMChain(llm=_llm, prompt=mermaid_prompt)
+    # Modern LCEL (LangChain Expression Language) chaining
+    desc_chain = desc_prompt | _llm | StrOutputParser()
+    mermaid_chain = mermaid_prompt | _llm | StrOutputParser()
     
-    descriptions = desc_chain.run(code=code_content, language=language)
-    mermaid_code = mermaid_chain.run(code=code_content, language=language)
+    descriptions = desc_chain.invoke({"code": code_content, "language": language})
+    mermaid_code = mermaid_chain.invoke({"code": code_content, "language": language})
     
     return descriptions, mermaid_code
 
@@ -160,8 +152,6 @@ def main():
         st.stop()
 
     # Session State for Chat Memory
-    if "memory" not in st.session_state:
-        st.session_state.memory = ConversationBufferMemory()
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -226,38 +216,35 @@ def main():
             
             # Chat Input
             if prompt := st.chat_input("QUERY SYSTEM ABOUT CODE..."):
-                # Append user msg
                 st.session_state.messages.append({"role": "user", "content": prompt})
                 with st.chat_message("user"):
                     st.markdown(prompt)
                     
-                # Generate response
                 with st.chat_message("assistant"):
                     with st.spinner("CALCULATING RESPONSE..."):
-                        # Contextual Q&A prompt
-                        chat_prompt = PromptTemplate(
-                            input_variables=["chat_history", "code", "question"],
-                            template="""You are an expert AI code assistant. Use the provided source code to answer the question.
-                            
-                            Code:
-                            {code}
-                            
-                            Chat History:
-                            {chat_history}
-                            
-                            Question: {question}"""
-                        )
                         
-                        chat_chain = LLMChain(
-                            llm=llm, 
-                            prompt=chat_prompt, 
-                            memory=st.session_state.memory
-                        )
+                        # Format chat history directly from session state natively
+                        chat_history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages[:-1]])
                         
-                        response = chat_chain.run(
-                            code=code_content,
-                            question=prompt
-                        )
+                        chat_prompt = PromptTemplate.from_template("""You are an expert AI code assistant. Use the provided source code to answer the question.
+                        
+                        Code:
+                        {code}
+                        
+                        Chat History:
+                        {chat_history}
+                        
+                        Question: {question}""")
+                        
+                        # Modern LCEL chain replacing deprecated LLMChain & ConversationBufferMemory
+                        chat_chain = chat_prompt | llm | StrOutputParser()
+                        
+                        response = chat_chain.invoke({
+                            "code": code_content,
+                            "chat_history": chat_history_str,
+                            "question": prompt
+                        })
+                        
                         st.markdown(response)
                         st.session_state.messages.append({"role": "assistant", "content": response})
 
