@@ -147,7 +147,7 @@ def main():
 
     # Initialize LLM
     try:
-        llm = ChatGoogleGenerativeAI(temperature=0.2, google_api_key=api_key, model="gemini-2.0-flash")
+        llm = ChatGoogleGenerativeAI(temperature=0.2, google_api_key=api_key, model="gemini-3.6-flash")
     except Exception as e:
         st.error(f"INITIALIZATION_ERROR: {str(e)}")
         st.stop()
