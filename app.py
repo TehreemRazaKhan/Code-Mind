@@ -1,6 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import os
+import re
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -20,22 +21,17 @@ SCIFI_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Share+Tech+Mono&display=swap');
     
-    /* Global Styles */
     html, body, [class*="css"] {
         font-family: 'Share Tech Mono', monospace;
         background-color: #0a0a0f !important;
         color: #00ffcc !important;
     }
-    
-    /* Headers */
     h1, h2, h3 {
         font-family: 'Orbitron', sans-serif;
         color: #ff00ff !important;
         text-transform: uppercase;
         text-shadow: 0 0 5px #ff00ff;
     }
-    
-    /* Buttons */
     .stButton>button {
         background: transparent !important;
         color: #00ffcc !important;
@@ -48,23 +44,17 @@ SCIFI_CSS = """
         color: #0a0a0f !important;
         box-shadow: 0 0 20px rgba(0, 255, 204, 0.6);
     }
-    
-    /* File Uploader */
     .stFileUploader {
         border: 1px dashed #ff00ff;
         background: rgba(255, 0, 255, 0.05);
         padding: 10px;
         border-radius: 5px;
     }
-    
-    /* Chat bubbles */
     .stChatMessage {
         background-color: rgba(0, 255, 204, 0.05) !important;
         border-left: 2px solid #00ffcc;
         border-radius: 0;
     }
-    
-    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {
         background-color: transparent;
     }
@@ -83,10 +73,14 @@ MAX_FILE_SIZE_MB = 5
 SUPPORTED_EXTENSIONS = ['.py', '.js', '.java', '.cpp', '.c', '.ts', '.go', '.rs']
 
 def render_mermaid(code: str):
-    """Renders a Mermaid.js diagram using HTML/JS injection."""
+    """Cleans markdown ticks and renders a Mermaid.js diagram."""
+    # Clean any accidental markdown code block wrappers
+    clean_code = re.sub(r'```(?:mermaid)?\s*', '', code)
+    clean_code = clean_code.replace('```', '').strip()
+    
     html_code = f"""
-    <div class="mermaid" style="background-color: #f0f0f0; padding: 20px; border-radius: 10px;">
-        {code}
+    <div class="mermaid" style="background-color: #12121a; padding: 20px; border-radius: 10px; color: #fff;">
+        {clean_code}
     </div>
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
@@ -96,31 +90,32 @@ def render_mermaid(code: str):
     components.html(html_code, height=600, scrolling=True)
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def analyze_code_cached(_llm, code_content: str, language: str):
-    """Caches the heavy analysis to prevent redundant API calls."""
-    desc_prompt = PromptTemplate.from_template("""Analyze the following {language} code. Provide structural descriptions at three difficulty levels.
-        FORMAT EXACTLY LIKE THIS:
-        ### [BEGINNER]
-        (Simple explanation for non-technical users)
-        ### [INTERMEDIATE]
-        (Explanation for developers, focusing on logic and functions)
-        ### [EXPERT]
-        (Deep dive into time complexity, memory management, and architectural patterns)
+def analyze_code_cached(_llm, code_content: str, language: str, skill_level: str):
+    """Caches the heavy analysis filtered by user-selected skill level."""
+    desc_prompt = PromptTemplate.from_template("""Analyze the following {language} code specifically tailored for a **{skill_level}** level developer/user.
+        
+        Provide a deep, clear breakdown focusing on:
+        - Core logic and functionality appropriate for this level
+        - Key components or functions
+        - Architectural insights or performance considerations matching this tier
         
         CODE:
         {code}""")
     
-    mermaid_prompt = PromptTemplate.from_template("""Create a Mermaid.js flowchart mapping out the logic and dependencies of this {language} code.
-        Respond ONLY with the valid Mermaid code blocks (start with 'graph TD'). Do not include markdown code ticks (`).
+    mermaid_prompt = PromptTemplate.from_template("""Generate a valid Mermaid.js flowchart (graph TD) mapping out the logic and control flow of this {language} code.
+        CRITICAL RULES FOR VALID SYNTAX:
+        1. Start the response directly with 'graph TD'.
+        2. Do NOT use markdown code blocks (no ``` or ```mermaid).
+        3. Node labels containing spaces or special characters MUST be wrapped in double quotes (e.g., Node1["Function Call"]).
+        4. Keep node IDs simple alphanumeric characters (e.g., A, B, C1).
         
         CODE:
         {code}""")
     
-    # Modern LCEL (LangChain Expression Language) chaining
     desc_chain = desc_prompt | _llm | StrOutputParser()
     mermaid_chain = mermaid_prompt | _llm | StrOutputParser()
     
-    descriptions = desc_chain.invoke({"code": code_content, "language": language})
+    descriptions = desc_chain.invoke({"code": code_content, "language": language, "skill_level": skill_level})
     mermaid_code = mermaid_chain.invoke({"code": code_content, "language": language})
     
     return descriptions, mermaid_code
@@ -132,10 +127,19 @@ def main():
     st.title("NEURAL_CODE_NEXUS //")
     st.markdown("`[SYSTEM ACTIVE] AI-POWERED CODE TOPOGRAPHY AND ANALYSIS ENGINE`")
 
-    # Sidebar: Config & Keys
+    # Sidebar: Config & User Controls
     with st.sidebar:
         st.header("TERMINAL_CONFIG")
-        api_key = st.text_input("ENTER GOOGLE GEMINI API KEY:", type="password")
+        api_key = st.text_input("ENTER GEMINI API KEY:", type="password")
+        
+        st.markdown("---")
+        st.header("ANALYTICS PARAMETERS")
+        skill_level = st.selectbox(
+            "SELECT TARGET DEPTH",
+            ["Beginner", "Intermediate", "Expert"],
+            help="Choose the technical complexity level for the code description."
+        )
+        
         if not api_key:
             st.warning("SYSTEM REQUIRES API KEY TO INITIALIZE.")
             st.stop()
@@ -143,9 +147,8 @@ def main():
         st.markdown("---")
         st.markdown(f"**Max Upload Size:** {MAX_FILE_SIZE_MB}MB")
         st.markdown(f"**Supported:** {', '.join(SUPPORTED_EXTENSIONS)}")
-        
 
-    # Initialize LLM
+    # Initialize LLM with Gemini
     try:
         llm = ChatGoogleGenerativeAI(temperature=0.2, google_api_key=api_key, model="gemini-3.6-flash")
     except Exception as e:
@@ -161,9 +164,8 @@ def main():
     
     if uploaded_file:
         file_ext = os.path.splitext(uploaded_file.name)[1].lower()
-        file_size = uploaded_file.size / (1024 * 1024) # Convert to MB
+        file_size = uploaded_file.size / (1024 * 1024)
         
-        # Validation
         if file_ext not in SUPPORTED_EXTENSIONS:
             st.error("UNSUPPORTED_FILE_TYPE_DETECTED.")
             st.stop()
@@ -173,31 +175,28 @@ def main():
             
         code_content = uploaded_file.getvalue().decode("utf-8")
         
-        # UI Tabs
         tab1, tab2, tab3, tab4 = st.tabs(["DATA_STREAM (Code)", "ANALYSIS_CORE", "HOLOGRAM_MAP (Diagram)", "COMMLINK (Q&A)"])
         
         with tab1:
             st.subheader(f"FILE: {uploaded_file.name}")
             st.code(code_content, language=file_ext.strip('.'))
             
-        # Run Analysis
         with st.spinner("PROCESSING NEURAL PATHWAYS... (Max 30s)"):
             try:
-                descriptions, mermaid_code = analyze_code_cached(llm, code_content, file_ext)
+                descriptions, mermaid_code = analyze_code_cached(llm, code_content, file_ext, skill_level)
             except Exception as e:
                 st.error(f"PROCESSING_FAILED: {str(e)}")
                 st.stop()
 
         with tab2:
-            st.subheader("STRUCTURAL DECRYPTION")
+            st.subheader(f"STRUCTURAL DECRYPTION [{skill_level.upper()} TIER]")
             st.markdown(descriptions)
             
-            # Downloadable Report
-            report = f"File: {uploaded_file.name}\n\n{descriptions}\n\nMermaid Diagram Code:\n{mermaid_code}"
+            report = f"File: {uploaded_file.name}\nLevel: {skill_level}\n\n{descriptions}\n\nMermaid Diagram Code:\n{mermaid_code}"
             st.download_button(
                 label="DOWNLOAD_REPORT.TXT",
                 data=report,
-                file_name=f"analysis_{uploaded_file.name}.txt",
+                file_name=f"analysis_{uploaded_file.name}_{skill_level.lower()}.txt",
                 mime="text/plain"
             )
 
@@ -210,12 +209,10 @@ def main():
         with tab4:
             st.subheader("INTERACTIVE CODE QUERY")
             
-            # Render chat history
             for msg in st.session_state.messages:
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
             
-            # Chat Input
             if prompt := st.chat_input("QUERY SYSTEM ABOUT CODE..."):
                 st.session_state.messages.append({"role": "user", "content": prompt})
                 with st.chat_message("user"):
@@ -223,11 +220,9 @@ def main():
                     
                 with st.chat_message("assistant"):
                     with st.spinner("CALCULATING RESPONSE..."):
-                        
-                        # Format chat history directly from session state natively
                         chat_history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages[:-1]])
                         
-                        chat_prompt = PromptTemplate.from_template("""You are an expert AI code assistant. Use the provided source code to answer the question.
+                        chat_prompt = PromptTemplate.from_template("""You are an expert AI code assistant. Use the provided source code and target skill level ({skill_level}) to answer the user question.
                         
                         Code:
                         {code}
@@ -237,11 +232,11 @@ def main():
                         
                         Question: {question}""")
                         
-                        # Modern LCEL chain replacing deprecated LLMChain & ConversationBufferMemory
                         chat_chain = chat_prompt | llm | StrOutputParser()
                         
                         response = chat_chain.invoke({
                             "code": code_content,
+                            "skill_level": skill_level,
                             "chat_history": chat_history_str,
                             "question": prompt
                         })
